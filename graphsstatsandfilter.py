@@ -23,8 +23,11 @@ from matplotlib.ticker import FormatStrFormatter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import ast
 import math
+import operator
 
 # Helper
+
+ops = { "<": operator.lt, ">": operator.gt}
 
 def fix_time(time):
 	timetype = " sec"
@@ -67,7 +70,8 @@ def hm_plot(intensity, type, ids, xaxis, yaxis, catarray):
 	ax1.set_xlabel(xaxis)
 	ax1.set_ylabel("Fish ID Numbers")
 	ax1.set_yticks(np.arange(len(ids)) + 0.5)
-	ax1.set_yticklabels(reversed(ids))
+	ax1.set_yticklabels(ids)
+	#ax1.set_yticklabels(reversed(ids))
 	#ax1.set_yticklabels(reversed(ids), fontsize = 14)
 	im = ax1.pcolormesh(x,y,intensity,cmap='hot',vmin=np.nanmin(catarray),vmax=np.nanmax(catarray))
 	divider = make_axes_locatable(ax1)
@@ -91,6 +95,7 @@ def box_plot(arrays, type, ylabel, genos):
 	for l in range(0, len(data)):
 		if data[l].ndim > 1:
 			mu1 = np.nanmean(data[l], axis=1)
+	#		print("mu1: "+str(mu1))
 		else:
 			mu1 = data[l]
 		dictdata[str(l)] = mu1
@@ -103,8 +108,10 @@ def box_plot(arrays, type, ylabel, genos):
 	ax1 = fig.add_subplot(121)
 	ax1.set_ylabel(ylabel)
 	ax1.set_xticklabels(justgenos)
+	#ax1.set_ylim(-0.05,0.65)
 	ax1.set_axisbelow(True)
-	plot = df.boxplot(ax=ax1)
+	meanlineprops = dict(linestyle='-', linewidth=2.5, color='purple')
+	plot = df.boxplot(ax=ax1,meanprops=meanlineprops,meanline=True,showmeans=True)
 	plt.savefig(boxgraphname, transparent=True, format="png")
 	plt.close()
 
@@ -184,8 +191,10 @@ def linear_model_array(ribgraphname, array1, array2):
 def anova(dataname, nparray1, nparray2):
 	if nparray1.ndim > 1:
 		nanmean1 = np.nanmean(np.nanmean(nparray1, axis=1))
+		#print("nanamean1: "+str(nanmean1))
 		nanvar1 = np.nanvar(np.nanmean(nparray1, axis=1))
 		nanmean2 = np.nanmean(np.nanmean(nparray2, axis=1))
+		#print("nanamean2: "+str(nanmean2))
 		nanvar2 = np.nanvar(np.nanmean(nparray2, axis=1))
 		H, pval = mstats.kruskalwallis(np.nanmean(nparray1, axis=1), np.nanmean(nparray2, axis=1))
 		print("anova: ", dataname, ': N of control, test, Mean of array control, test, Variance of array control, test, SSMD, H-stat, P-value: ', len(np.nanmean(nparray1, axis=1)),len(np.nanmean(nparray2, axis=1)), str(nanmean1), str(nanmean2), str(nanvar1), str(nanvar2), str((nanmean1 - nanmean2) / math.sqrt(nanvar1+nanvar2)), str(H), str(pval))
@@ -200,23 +209,22 @@ def anova(dataname, nparray1, nparray2):
 # End Statistics
 
 
-def filter_obend(array, ribgraphname, header, filters):
-	newnamev = []
-	newnamel = []
+def filter_responses(array, ribgraphname, header, filters):
+	newname_f1 = []
+	newname_f2 = []
 	for r in ribgraphname.split("_"):
 		if r.startswith("response"):
-			newnamev.append("responsetime")
-			newnamel.append("responsesumabsheadingangle")
+			newname_f1.append(filters[1].split(":")[1])
+			newname_f2.append(filters[3].split(":")[1])
 		else:
-			newnamev.append(r)
-			newnamel.append(r)
-	velarray = np.loadtxt("_".join(newnamev), delimiter = ',')
-	latarray = np.loadtxt("_".join(newnamel), delimiter = ',')
-	boolvel = velarray > filters[0]
-	# Used to be latency/velocity, but now we filter these anyway based on the frames considered, so using new measure
-	boollat = latarray > filters[1]
-	boolmask = np.logical_and(boolvel, boollat)
-	invboolmask = np.logical_not(np.logical_and(boolvel, boollat))
+			newname_f1.append(r)
+			newname_f2.append(r)
+	f1_array = np.loadtxt("_".join(newname_f1), delimiter = ',')
+	f2_array = np.loadtxt("_".join(newname_f2), delimiter = ',')
+	bool_f1 = ops[filters[1].split(":")[0]](f1_array, float(filters[0]))
+	bool_f2 = ops[filters[3].split(":")[0]](f2_array, float(filters[2]))
+	boolmask = np.logical_and(bool_f1, bool_f2)
+	invboolmask = np.logical_not(np.logical_and(bool_f1, bool_f2))
 	mxw = np.ma.masked_array(array, mask=boolmask)
 	imxw = np.ma.masked_array(array, mask=invboolmask)
 	if "_responsefrequency_" in ribgraphname:
@@ -230,38 +238,6 @@ def filter_obend(array, ribgraphname, header, filters):
 	smallname = "notescapes" + ribgraphname
 	np.savetxt(bigname, np.array(imxw,dtype=np.float64), delimiter = ',', header=header)
 	np.savetxt(smallname, np.array(mxw,dtype=np.float64), delimiter = ',', header=header)
-
-
-def filter_cbend(array, ribgraphname, header, filters):
-	newnamev = []
-	newnamel = []
-	for r in ribgraphname.split("_"):
-		if r.startswith("response"):
-			newnamev.append("responsevelocity")
-			newnamel.append("responsepeakdpix")
-		else:
-			newnamev.append(r)
-			newnamel.append(r)
-	velarray = np.loadtxt("_".join(newnamev), delimiter = ',')
-	latarray = np.loadtxt("_".join(newnamel), delimiter = ',')
-	boolvel = velarray > filters[0]
-	boollat = latarray > filters[1]
-	boolmask = np.logical_and(boolvel, boollat)
-	invboolmask = np.logical_not(np.logical_and(boolvel, boollat))
-	mxw = np.ma.masked_array(array, mask=boolmask)
-	imxw = np.ma.masked_array(array, mask=invboolmask)
-	if "_responsefrequency_" in ribgraphname:
-		imxw = np.ma.filled(imxw, 0)
-		mxw = np.ma.filled(mxw, 0)
-		imxw[np.isnan(mxw)] = np.nan
-	else:
-		imxw = np.ma.filled(imxw, np.nan)
-	mxw = np.ma.filled(mxw, np.nan)
-	bigname = "realescapes" + ribgraphname
-	smallname = "notescapes" + ribgraphname
-	np.savetxt(bigname, np.array(imxw,dtype=np.float64), delimiter = ',', header=header)
-	np.savetxt(smallname, np.array(mxw,dtype=np.float64), delimiter = ',', header=header)
-
 
 def calc_stats(graphname, listofarrays,slowdata=False):
 	tuplist = []
@@ -314,17 +290,17 @@ def main(graphparametersfile, baselinelight, obendfilters, cbendfilters):
 		if ("response" in file2) and ("responsefull" not in file2):
 			stim = file2.split(".")[0].split("_")[-2]
 			if stim.startswith("a"): # Acoustic stimulus
-				filter_cbend(array, file2, header, cbendfilters)
+				filter_responses(array, file2, header, cbendfilters)
 			elif stim.startswith("b"): # Visual stimulus
 				intensity = int(stim.split("%")[0].split("b")[1]) # The voltage of the light
 				# Only calculating for reduction of light
 				if intensity < baselinelight:
-					filter_obend(array, file2, header, obendfilters)
+					filter_responses(array, file2, header, obendfilters)
 			elif stim.startswith("v"): # Visual stimulus
 				intensity = int(stim.split("%")[0].split("v")[1]) # The voltage of the light
 				# Only calculating for reduction of light
 				if intensity < baselinelight:
-					filter_obend(array, file2, header, obendfilters)
+					filter_responses(array, file2, header, obendfilters)
 	for file3 in glob.glob("*ribgraph*"+ genos[0] + ".data"): # Loop through (just one genotype) to make graphs and do statistical analyses
 		# Make a list of the number of genotypes, if it's more than two give warning, if it's just one also give warning and don't do stats	
 		arraylist = []

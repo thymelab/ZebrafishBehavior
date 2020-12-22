@@ -11,11 +11,17 @@ from scipy.stats import norm
 import copy
 import math
 import matplotlib
+import subprocess as sp
 import cProfile
 
 import fileloading # prepares all the files
 import setupgraphsandsavedata
 import graphsstatsandfilter
+import operator
+
+# Helper
+
+opsP = { "<": operator.lt, ">": operator.gt, "=": operator.eq} # using "=" in this input code for strings, but it really means ==
 
 # Helper functions
 
@@ -54,6 +60,26 @@ def cart_to_distance(x1, x2, y1, y2):
 
 # End Helper functions
 
+def save_movie(fish_id, fish_rois, bs, be):
+	fileprefix = fileloading.longmoviename.split(".")[0]
+	moviename = fileprefix + '_' + str(bs) + '_' + str(fish_id) + '.mp4'
+	# for ffmpeg the order is w:h:x:y where x and y are top left coordinates
+	w = fish_rois[2] - fish_rois[0]
+	h = fish_rois[3] - fish_rois[1]
+	x = fish_rois[0]
+	y = fish_rois[1]
+	try:
+		sp.call('ffmpeg -i ' + fileloading.longmoviename + ' -vf "select=between(n\,' + str(bs - 3) + '\,' + str(be + 3) + '),setpts=10*PTS" -vsync 0 ' + moviename, shell=True)
+		#sp.call('ffmpeg -i ' + fileprefix + '.mp4 -vf "select=between(n\,' + str(bs - 3) + '\,' + str(be + 3) + '),setpts=10*PTS" -vsync 0 ' + moviename, shell=True)
+		sp.call('ffmpeg -i ' + moviename + ' -filter:v "crop=' + str(w) + ':' + str(h) + ':' + str(x) + ':' + str(y) + '" crop_' + moviename, shell=True)
+		# Line below scales the cropped movie for large seizures
+	#	sp.call('ffmpeg -i ' + 'crop_' + moviename + ' -filter:v scale="150:-1" ' + 'scalecrop_' + moviename, shell=True) 
+	except: # IN CASE EVENT HAPPENS TO BE AT AN EDGE, JUST USE THE DEFAULT EVENT FRAMES
+		sp.call('ffmpeg -i ' + fileloading.longmoviename + ' -vf "select=between(n\,' + str(bs) + '\,' + str(be) + '),setpts=10*PTS" -vsync 0 ' + moviename, shell=True)
+		#sp.call('ffmpeg -i ' + fileprefix + '.mp4 -vf "select=between(n\,' + str(bs) + '\,' + str(be) + '),setpts=10*PTS" -vsync 0 ' + moviename, shell=True)
+		sp.call('ffmpeg -i ' + moviename + ' -filter:v "crop=' + str(w) + ':' + str(h) + ':' + str(x) + ':' + str(y) + '" crop_' + moviename, shell=True)
+		# Line below scales the cropped movie for large seizures
+	#	sp.call('ffmpeg -i ' + 'crop_' + moviename + ' -filter:v scale="150:-1" ' + 'scalecrop_' + moviename, shell=True)
 
 def PolyArea(xarr,yarr): # x and y are the coordinate lists for bout start to bout end
 	pA = 0.5*np.abs(np.dot(xarr,np.roll(yarr,1))-np.dot(yarr,np.roll(xarr,1)))
@@ -197,7 +223,7 @@ def calculate_distance(fish):
 
 
 # This function is where you would add in additional measures, if you want something new for slow-speed data
-def CalculateBoutProperties(fish_distancesordpix, timestamp_data_array, boutstarts, boutends, rhos, thetas, xarray, yarray, prefix = "", rhothetadone = False):
+def CalculateBoutProperties(fish_id, fish_rois, fish_distancesordpix, timestamp_data_array, boutstarts, boutends, rhos, thetas, xarray, yarray, prefix = "", rhothetadone = False):
 	# Constants needed
 	rhomax = np.amax(rhos)
 	halfpt = rhomax * 0.45 # this is what we are calling the halfpt
@@ -274,6 +300,7 @@ def CalculateBoutProperties(fish_distancesordpix, timestamp_data_array, boutstar
 		else:
 			boutproperties["numberofboutsSLEEP"].append(0)
 		# The call of this function that is done second (the dpix one) will already have completed this and the lists will be empty
+		# This approach will fail if someone switches order they call the dpix and distance analyses
 		if( rhothetadone == False):
 			boutdisplacement = polar_to_distance(rhos[bout_start], rhos[bout_end], thetas[bout_start], thetas[bout_end])
 			boutproperties["boutdisplacement"].append(boutdisplacement)
@@ -284,8 +311,8 @@ def CalculateBoutProperties(fish_distancesordpix, timestamp_data_array, boutstar
 			boutrev = calculate_boutrev(bout_start, bout_end, unsignedthetas, rhos)
 			boutproperties["boutrevolutions"].append(boutrev)
 			
-			#if ((boutrev > 4.0) and (300 < (bouttime / boutdistanceordpix) < 1300) and (boutdistanceordpix > 70)):
-			if ((boutrev > fileloading.seizurefilters[0]) and (fileloading.seizurefilters[1] < (float(bouttime) / float(boutdistanceordpix)) < fileloading.seizurefilters[2]) and (fileloading.seizurefilters[3] > 70)):
+			#if ((boutrev > 4.0) and (0.3 < (bouttime / boutdistanceordpix) < 1.3) and (boutdistanceordpix > 70)):
+			if ((boutrev > fileloading.seizurefilters[0]) and ((float(boutdistanceordpix) / float(bouttime)) > fileloading.seizurefilters[1]) and (float(boutdistanceordpix) > fileloading.seizurefilters[3])):
 				boutproperties["boutseizurecount"].append(1)
 			else:
 				boutproperties["boutseizurecount"].append(0)
@@ -298,6 +325,13 @@ def CalculateBoutProperties(fish_distancesordpix, timestamp_data_array, boutstar
 			boutproperties["interboutrhofraction"].append(interaverhofrac)
 			boutproperties["boutcenterfraction"].append(centerfrac)
 			boutproperties["interboutcenterfraction"].append(intercenterfrac)
+			# Seems not likely that you would want to filter without real measurements from distance
+			if (fileloading.longmovie):
+				# PUT IN MOVIE FILTERS AND GET ALL OF THESE FUNCTION INPUTS
+				#"1,=:boutseizurecount"
+				# get value that was just added to the end of the list and compare to the input filter
+				if(opsP[fileloading.moviefilter[1].split(":")[0]](boutproperties[fileloading.moviefilter[1].split(":")[1]][len(boutproperties[fileloading.moviefilter[1].split(":")[1]])-1], int(fileloading.moviefilter[0]))):
+					save_movie(fish_id, fish_rois, bout_start, bout_end)
 	for k in boutproperties.keys():
 		boutpropertieswithpre[prefix + k] = boutproperties[k]
 	return boutpropertieswithpre, sleepbouts
@@ -337,6 +371,9 @@ def identify_event_bout(dpix_movement, approximate_frames, threshold, frame_thre
 	bout_start_fr = 0
 	bout_end_fr = 0
 	earlybout = False
+	# The two lines below were a previous filter from the original code (Thyme, Cell 2019). Not cutting off movements that occur right before start of frames now.
+	#if dpix_movement[approximate_frames[0]-1] > threshold: # In case fish is moving right away, but now doing frame before because the windows of bout_start are tight
+        #        earlybout = True
 	if approximate_frames[0] > 0:
 		for b0 in range(0, approximate_frames[0] - 3): # Assumes that there is a buffer at the beginning of at least three frames before the expected motion
 			if dpix_movement[b0] > threshold and dpix_movement[b0+1] > threshold and dpix_movement[b0+2] > threshold: # has to be real motion and not a flicker 
@@ -406,7 +443,7 @@ def CalculateEventProperties(name, eventsection, hs_dict, hs_distances, threshol
 			continue
 		for eventtime in eventsection[event]: # time key used in hs_distances
 			# Bout are identified only on dpix data, not on distance data, but then the frames of the dpix responses are used to calculate the distance information
-			# COULD UPDATE THIS FXN TO BE BETTER, LIKE THE SLOW-SPEED ONE, BUT NOT RIGHT NOW	
+			# COULD UPDATE THIS FXN TO BE BETTER, LIKE THE SLOW-SPEED ONE, BUT NOT RIGHT NOW
 			(dpix_bout_start, dpix_bout_end) = identify_event_bout(hs_dict[eventtime], approximate_frames, threshold, frame_threshold)
 			if (np.isnan(dpix_bout_end) or np.isnan(dpix_bout_start)):
 				for k,vlist in responseproperties.items():
@@ -619,10 +656,10 @@ def process_all_data():
 		fish_distances = calculate_distance(fish)
 		hs_fish_distances = hs_calculate_distance(fish)
 		boutstarts,boutends = findBoutIndices(fish_distances, fileloading.thresholdvalues[0], fileloading.thresholdframes[0])
-		boutproperties, sleepbouts = CalculateBoutProperties(fish_distances, timestamp_data_array, boutstarts, boutends, fish.rho_array, fish.theta_array, fish.x_array, fish.y_array)
+		boutproperties, sleepbouts = CalculateBoutProperties(fish.idnumber, fish.rois, fish_distances, timestamp_data_array, boutstarts, boutends, fish.rho_array, fish.theta_array, fish.x_array, fish.y_array)
 		dboutstarts,dboutends = findBoutIndices(fish.dpix, fileloading.thresholdvalues[1], fileloading.thresholdframes[1])
 		# The "True" indicates that the well center and rho data (and displacement) is already done, and those lists will return as empty
-		dboutproperties, dsleepbouts = CalculateBoutProperties(fish.dpix, timestamp_data_array, dboutstarts, dboutends, fish.rho_array, fish.theta_array, fish.x_array, fish.y_array, "dpix_", True)
+		dboutproperties, dsleepbouts = CalculateBoutProperties(fish.idnumber, fish.rois, fish.dpix, timestamp_data_array, dboutstarts, dboutends, fish.rho_array, fish.theta_array, fish.x_array, fish.y_array, "dpix_", True)
 		
 		# Processed data object, with access to binned_time((tuple that can be 2 or 1)), data itself, name, and then will add the graphing parameters to it (x-axis, y-axis), high-speed or slow-speed (default)
 		# Fish contain a list of Processed data objects
@@ -637,7 +674,7 @@ def process_all_data():
 		for r in range(0, len(fileloading.activitytimes)-1, 2):
 			tup_time = (str(fileloading.activitytimes[r]),str(fileloading.activitytimes[r+1]))
 			fish.add_binned_data(flexactivity(fish_distances, fileloading.activitytimesthresholds[0], indexdict[str(fileloading.activitytimes[r])],indexdict[str(fileloading.activitytimes[r+1])], tup_time))
-			fish.add_binned_data(flexactivity(fish.dpix, fileloading.activitytimesthresholds[1], indexdict[str(fileloading.activitytimes[r])],indexdict[str(fileloading.activitytimes[r+1])], tup_time))
+			fish.add_binned_data(flexactivity(fish.dpix, fileloading.activitytimesthresholds[1], indexdict[str(fileloading.activitytimes[r])],indexdict[str(fileloading.activitytimes[r+1])], tup_time, "dpix_"))
 		for es2 in eventsectionlist:
 			if es2.type != "time":
 				fish.add_binned_data(CalculateEventProperties(es2.name, es2.events, fish.hs_dict, hs_fish_distances, fileloading.hsthresholdvalues[1], fileloading.hsthresholdframes[1], fish.hs_pos_x, fish.hs_pos_y))

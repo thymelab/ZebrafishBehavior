@@ -7,7 +7,7 @@ parser.add_argument('-ofile', type=str, action="store", dest="ofile", default=""
 parser.add_argument('-include', type=str, action="store", dest="includetxt", default="ribgraph")
 parser.add_argument('-exclude', type=str, action="store", dest="excludetxt", default="weirdword")
 parser.add_argument('-cutoff', type=float, action="store", dest="cutoff", default=0.05)
-parser.add_argument('-overwriteanova', action="store_true", dest="overwriteanova", default=False) # Use the pval from linear mixed model instead of fram anova
+parser.add_argument('-overwriteanova', action="store_true", dest="overwriteanova", default=False) # Use the pval from linear mixed model instead of from anova
 parser.add_argument('-showfulldata', action="store_true", dest="showfulldata", default=False)
 parser.add_argument('-sortalpha', action="store_true", dest="sortalpha", default=False)
 
@@ -34,27 +34,31 @@ for sfilename in glob.glob(statsfile):
 			pval = line.strip().split()[-1] # I always leave pval at the end
 			graph = line.strip().split(":")[1].strip()
 			fulldata = line.strip().split(":")[3].strip()
-			if float(pval) < cutoff:
-				pvallist.append([float(pval), graph, fulldata])
+			#if float(pval) < cutoff:
+			pvallist.append([float(pval), graph, fulldata])
 		else:
 			if not overwriteanova: # don't even look at the linear mixed model info
 				continue
 			if line.startswith("ribgraph"):
 				ribgraph = line.strip() # saving and then it will match up with the next instance of hitting the "mutornot"
+ 			if line.startswith("linear model failed"):
+				ribgraph = line.split(":")[1].strip() # saving and then it will match up with the next instance of hitting the "mutornot"
+				pvallist.append([float(1000.0), ribgraph, ""])
 			if line.startswith("mutornot[T.wt] "):
 				if len(line.split()) > 3:
 					lmmpval = line.split()[4]
 					coef = line.split()[1]
 					if float(lmmpval) == 0:
 						lmmpval = 0.001
-					if float(lmmpval) < cutoff:
-						pvallist.append([float(lmmpval), ribgraph, ""])
+					#if float(lmmpval) < cutoff:
+					pvallist.append([float(lmmpval), ribgraph, ""])
 	for stat in pvallist:
 		if stat[2] == "": # if it's lmm data
 			for s in range(0, len(pvallist)):
 				if stat[1] == pvallist[s][1]: # found the lmm data
 					pvallist[s][0] = stat[0] # replacing pval in the non-lmm data with lmm pval
-	filteredpvallist = [x for x in pvallist if not x[2]==""] # eliminate all the original lmms
+	filteredpvallist0 = [x for x in pvallist if not x[2]==""] # eliminate all the original lmms
+	filteredpvallist = [x for x in filteredpvallist0 if not x[0]>cutoff] # filter by the cutoff
 	if sortalpha:
 		filteredpvallist.sort(key=lambda x: x[1])
 	else:
@@ -68,4 +72,5 @@ for sfilename in glob.glob(statsfile):
 			if includetxt in str(final[1]):
 				if excludetxt not in str(final[1]):
 					outfile.write(str(final[0]) + " " + str(final[1]) + '\n')
+	ofile = ""
 # don't forget to count the ones <0.05

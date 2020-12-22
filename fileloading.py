@@ -11,16 +11,20 @@ from os import path
 from Fish import Fish # fish object
 from EventSection import EventSection # event section object
 
-
+# This dictionary is only used if -oldtracking is on, for old datasets before ROIs were saved by LabVIEW. Irrelevant for new users.
+well_conversion = {0:0,8:1,16:2,24:3,32:4,40:5,48:6,56:7,64:8,72:9,80:10,88:11,1:12,9:13,17:14,25:15,33:16,41:17,49:18,57:19,65:20,73:21,81:22,89:23,2:24,10:25,18:26,26:27,34:28,42:29,50:30,58:31,66:32,74:33,82:34,90:35,3:36,11:37,19:38,27:39,35:40,43:41,51:42,59:43,67:44,75:45,83:46,91:47,4:48,12:49,20:50,28:51,36:52,44:53,52:54,60:55,68:56,76:57,84:58,92:59,5:60,13:61,21:62,29:63,37:64,45:65,53:66,61:67,69:68,77:69,85:70,93:71,6:72,14:73,22:74,30:75,38:76,46:77,54:78,62:79,70:80,78:81,86:82,94:83,7:84,15:85,23:86,31:87,39:88,47:89,55:90,63:91,71:92,79:93,87:94,95:95}
 # Input arguments
 parser = argparse.ArgumentParser(description='loading for fish behavior files')
+parser.add_argument('-longmovie', type=str, action="store", dest="longmoviename", default="nomovie")
+parser.add_argument('-r', type=str, action="store", dest="roisfile")
+parser.add_argument('-oldtracking', action="store_true", dest="oldtracking", default=False) # Tracked data from before code was updated to have output ROIs, irrelevant for new users, only compatible with 96-well plates
 parser.add_argument('-graphonly', action="store_true", dest="graphonly", default=False)
 parser.add_argument('-j', type=str, action="store", dest="graphparameters", default="PlotParameters")
 parser.add_argument('-t', type=str, action="store", dest="tstampfile")
 parser.add_argument('-e', type=str, action="store", dest="eventsfile")
 parser.add_argument('-c', type=str, action="store", dest="centroidfile")
 parser.add_argument('-d', type=str, action="store", dest="dpixfile")
-parser.add_argument('-m', type=str, action="store", dest="movieprefix")
+parser.add_argument('-m', type=str, action="store", dest="movieprefix", default = "")
 parser.add_argument('-g', type=str, action="store", dest="genotypefile")
 parser.add_argument('-s', type=str, action="store", dest="sectionsfile", default="sectionsfile")
 parser.add_argument('-n', type=int, action="store", dest="numberofwells", default=96)
@@ -33,12 +37,19 @@ parser.add_argument('-x', type=str, action="store", dest="hsthresholdframes", de
 parser.add_argument('-a', type=str, action="store", dest="activitytimes", default="1/60,60/600,60/3600,1/3600") # list of comparisons for activity data in seconds
 parser.add_argument('-y', type=str, action="store", dest="activitytimesthresholds", default="1,10") # thresholds for activity data, first distance and second dpix (differs from bout thresholds because we don't have frame considerations)
 parser.add_argument('-b', type=str, action="store", dest="boutbins", default="60,600,3600") # list of times bins for the bout data (ie, ave bout speed / minute) in seconds
-parser.add_argument('-z', type=str, action="store", dest="seizurefilters", default="4.0,300,1300,70") # ((boutrev > 4.0) and (300 < (boutspeed) < 1300) and (boutdistance > 70)):
+parser.add_argument('-z', type=str, action="store", dest="seizurefilters", default="4.0,0.3,1.3,70") # ((boutrev > 4.0) and (0.3 < (boutspeed) < 1.3) and (boutdistance > 70)):
 parser.add_argument('-l', type=int, action="store", dest="lightbaseline", default=200) # baseline level of light, used to determine what is a dark flash for filtering O-bend
-parser.add_argument('-o', type=str, action="store", dest="obendfilter", default="60,10") # two measures that are intersected (both must be true), and responses with greater magnitude than both are considered true O-bends. The two measures are "responsetime" and "sumabsha" (sum of absolute value of heading angles). To change the type of measure, code in graphsstatsandfilter.py must be changed
-parser.add_argument('-p', type=str, action="store", dest="cbendfilter", default="0.2,1500") # two measures that are intersected (both must be true), and responses with greater magnitude than both are considered true C-bends. The two measures are "responsevelocity" and "responsecumdpix". To change the type of measure, code in graphsstatsandfilter.py must be changed
+parser.add_argument('-o', type=str, action="store", dest="obendfilter", default="60,>:responsetime,10,>:responsesumabsheadingangle") # two measures that are intersected (both must be true), and responses with greater magnitude than both are considered true O-bends. The two measures are "responsetime" and "sumabsha" (sum of absolute value of heading angles)
+parser.add_argument('-p', type=str, action="store", dest="cbendfilter", default="0.2,>:responsevelocity,1500,>:responsecumulativedpix") # two measures that are intersected (both must be true), and responses with greater magnitude than both are considered true C-bends. The two measures are "responsevelocity" and "responsecumdpix"
+parser.add_argument('-k', type=str, action="store", dest="moviefilter", default="1,=:boutseizurecount")
 
 args = parser.parse_args()
+longmoviename = args.longmoviename
+longmovie = False
+if(longmoviename != "nomovie"):
+	longmovie = True
+roisfile = args.roisfile
+oldtracking = args.oldtracking
 graphonly = args.graphonly
 graphparameters = args.graphparameters
 if(not graphonly):
@@ -60,8 +71,9 @@ activitytimesthresholds = list(map(float, args.activitytimesthresholds.split(','
 boutbins = list(map(int, args.boutbins.split(','))) # these bins and activity bins are not going to be less than a second (that doesn't work in code well), so it's fine to use int instead of float
 seizurefilters = list(map(float, args.seizurefilters.split(',')))
 lightbaseline = args.lightbaseline
-obendfilter = list(map(float, args.obendfilter.split(',')))
-cbendfilter = list(map(float, args.cbendfilter.split(',')))
+obendfilter = list(map(str, args.obendfilter.split(',')))
+cbendfilter = list(map(str, args.cbendfilter.split(',')))
+moviefilter = list(map(str, args.moviefilter.split(',')))
 
 # Helper functions, cart2pol and faststrptime
 
@@ -89,6 +101,23 @@ def faststrptime(val):
 	)
 
 # End Helper functions
+
+# Load the roi data, for analyzing long movies
+def load_rois(roi_dict):
+	f = open(roisfile, 'r')
+	lines = f.readlines()
+	i = 1
+	for line in lines:
+		try:
+			print(int(line.split(' ')[0]))
+		except ValueError:
+			continue
+		minx = int(line.split(' ')[0])
+		miny = int(line.split(' ')[1])
+		maxx = int(line.split(' ')[2])
+		maxy = int(line.split(' ')[3])
+		roi_dict[i] = [minx, miny, maxx, maxy]
+		i += 1
 
 
 # Loading of the centroid position data for the high-speed movies
@@ -340,7 +369,7 @@ def convert_to_polar(cen_data_array):
 # Later (after processmotiondata.py) the data inside this Fish object is analyzed (bouts counted, binned, responses counted) and the AnalyzedFish object carries that data
 # This analysis code only compares two groups: a control group and a test group
 # Or it can analyze a single group, but no statistics will be done
-def generate_fish_objects(dp_data_array, rho_array, theta_array, x_array, y_array, hs_dpix, hs_pos, genotypefile):
+def generate_fish_objects(dp_data_array, rho_array, theta_array, x_array, y_array, hs_dpix, hs_pos, genotypefile, rois_dict):
 	f = open(genotypefile, 'r')
 	lines = f.readlines()
 	f.close()
@@ -371,30 +400,57 @@ def generate_fish_objects(dp_data_array, rho_array, theta_array, x_array, y_arra
 		split_hs_pos_x = {}
 		split_hs_pos_y = {}
 		for d in hs_dpix.keys():
-			split_hs_dpix[d] = hs_dpix[d][:,n]
-			split_hs_pos_x[d] = hs_pos[d][:,2*n]
-			split_hs_pos_y[d] = hs_pos[d][:,2*n+1]
+			if oldtracking:
+				split_hs_dpix[d] = hs_dpix[d][:,well_conversion[n]]
+				split_hs_pos_x[d] = hs_pos[d][:,2*well_conversion[n]]
+				split_hs_pos_y[d] = hs_pos[d][:,2*well_conversion[n]+1]
+			else:
+				split_hs_dpix[d] = hs_dpix[d][:,n]
+				split_hs_pos_x[d] = hs_pos[d][:,2*n]
+				split_hs_pos_y[d] = hs_pos[d][:,2*n+1]
 		for x in genotype_list.keys():
 			if n in genotype_list[x]:
 				# Adding 1 back onto the fish.idnumber, because all we use it for later is to connect to original input and we want it to match
 				newfish = Fish(n + 1, x.split('_')[0], x.split('_')[1], dp_data_array[:,n], rho_array[:,n], theta_array[:,n], x_array[:,n], y_array[:,n], split_hs_dpix, split_hs_pos_x, split_hs_pos_y)
+				if(longmovie):
+					newfish.add_rois(rois_dict[n+1])
 				fish_list.append(newfish)
 	return fish_list
 
 
 # Start here
 def loading_procedures():
+	rois_dict = {}
+	if(longmovie):
+		load_rois(rois_dict)
+	
 	tuple_timestamps = load_timestamp_file()
 	print("Done loading timestamp file")
-	
-	with open(dpixfile, 'rb') as fid:
-		dp_data_array = np.fromfile(fid, dtype = '>u2')
-	dp_data_array = dp_data_array.reshape(dp_data_array.size // numberofwells, numberofwells)
-	print("Done loading dpix")
 
-	with open(centroidfile, 'rb') as fid:
-		cen_data_array = np.fromfile(fid, '>u2')
-	cen_data_array = cen_data_array.reshape(cen_data_array.size // (numberofwells*2), (numberofwells*2))
+	if(longmovie):
+		firstdpix = open(dpixfile, 'r')
+		dp_data_list = []
+		dlines = firstdpix.readlines()
+		for dline in dlines:
+			dp_data_list.append(int(dline))
+		dp_data_array = np.array(dp_data_list)
+		dp_data_array = dp_data_array.reshape(dp_data_array.size // numberofwells, numberofwells)
+		cenfile = open(centroidfile, 'r')
+		cen_data_list = []
+		clines = cenfile.readlines()
+		for cline in clines:
+			cen_data_list.append(int(cline))
+		cen_data_array = np.array(cen_data_list)
+		cen_data_array = cen_data_array.reshape(cen_data_array.size // (numberofwells*2), (numberofwells*2))
+	else:	
+		with open(dpixfile, 'rb') as fid:
+			dp_data_array = np.fromfile(fid, dtype = '>u2')
+		dp_data_array = dp_data_array.reshape(dp_data_array.size // numberofwells, numberofwells)
+		print("Done loading dpix")
+
+		with open(centroidfile, 'rb') as fid:
+			cen_data_array = np.fromfile(fid, '>u2')
+		cen_data_array = cen_data_array.reshape(cen_data_array.size // (numberofwells*2), (numberofwells*2))
 	cen_data_array[cen_data_array == 65535] = 0 # just setting to zero to make it easier to ignore
 	# This is because they are all values of -16 and the initial type of the array is unsigned int, but it should be clear that it means the fish hasn't moved yet
 	# converting them to zero for now so that it makes it easier to deal with the downstream max/min tests
@@ -409,7 +465,7 @@ def loading_procedures():
 	global_tuple_events = load_event_data(startdate, endDT, startDT)
 	print("Done loading events")
 	
-	fish_list = generate_fish_objects(dp_data_array, tuple_rho_theta[0], tuple_rho_theta[1], tuple_rho_theta[2], tuple_rho_theta[3], global_tuple_events[0], global_tuple_events[1], genotypefile)
+	fish_list = generate_fish_objects(dp_data_array, tuple_rho_theta[0], tuple_rho_theta[1], tuple_rho_theta[2], tuple_rho_theta[3], global_tuple_events[0], global_tuple_events[1], genotypefile, rois_dict)
 	return (fish_list, tuple_timestamps[0], tuple_timestamps[1], tuple_timestamps[2], global_tuple_events[2])
 
 def initialize_args():

@@ -13,6 +13,10 @@ Arguments
 -e: The events file used in the LabVIEW program Data Acquisition.vi
 -p: The pixel threshold to identify a larvae. Default is 3.
 -f: The frame rate of the high speed movie. Default is 285.
+-fd: The dimensions of the frames of the movie
+-s: The frequency in which the centroid and motion data is saved
+-longmovie: Argument for analyzing movies longer than a second. Produces a timestamp file with timepoints for each frame.
+-ml: The length of the movie in seconds
 
 Outputs
 -------
@@ -22,6 +26,7 @@ Last frame PNG image
 Last frame PNG image with ROI numbering
 Tracked lines PNG image
 Mode PNG image
+timestamp file (only for long movies)
  
 """
 
@@ -34,23 +39,32 @@ import math
 from PIL import Image, ImageFont, ImageDraw
 from pathlib import Path
 import datetime
-from datetime import datetime as dt
 import re
 import glob
 
 parser = argparse.ArgumentParser(description='loading for fish behavior files')
 parser.add_argument('-r', type=str, action="store", dest="roisfile")
 parser.add_argument('-m', type=str, action="store", dest="moviefile")
-parser.add_argument('-e', type=str, action="store", dest="eventsfile")
-parser.add_argument('-p', type=str, action="store", dest="pixThreshold", default=3)
-parser.add_argument('-f', type=str, action="store", dest="frameRate", default=285)
+parser.add_argument('-e', type=str, action="store", dest="eventsfile", default=False)
+parser.add_argument('-p', type=str, action="store", dest="pixThreshold", default="3,7")
+parser.add_argument('-f', type=int, action="store", dest="frameRate", default=285)
+parser.add_argument('-fd', type=str, action="store", dest="frameDimensions", default="660,1088")
+parser.add_argument('-s', type=int, action="store", dest="savefrequency", default=4500)
+parser.add_argument('-longmovie', action="store_true", dest="longmovie", default=False)
+parser.add_argument('-ml', type=int, action="store", dest="movielength", default=1) #in seconds
 
 args = parser.parse_args()
 roisfile = args.roisfile
+ydim = list(map(int, args.frameDimensions.split(',')))[0]
+xdim = list(map(int, args.frameDimensions.split(',')))[1]
 videoStream = args.moviefile
 eventsfile = args.eventsfile
-pixThreshold = args.pixThreshold
+pixThreshold = list(map(int, args.pixThreshold.split(',')))
 frameRate = args.frameRate
+saveFreq = args.savefrequency
+longmovie = args.longmovie
+movlen = args.movielength
+filenumber = videoStream.split('.')[0].split('_')[len(videoStream.split('.')[0].split('_'))-1]
 
 def calc_mode(deq, nump_arr):
     """
@@ -73,7 +87,7 @@ def calc_mode(deq, nump_arr):
         nump_arr[j,:] = mode(np.array([x[j,:] for x in deq]))[0]
     return nump_arr
 
-def imageMode(movielist, modename):
+def imageMode(modename,movielist=[1]):
     """
     This function uses the calcMode function to obtain the mode image. 
     It then writes the image as a PNG to be viewed later.
@@ -110,7 +124,7 @@ def imageMode(movielist, modename):
             totalFrames += 1
             storedFrame = currentFrame 
         i2 += 1
-    testing = calc_mode(moviedeq, np.zeros([660,1088]))
+    testing = calc_mode(moviedeq, np.zeros([ydim,xdim]))
     cv2.imwrite("mode_" + modename + ".png", testing)
     cap.release()
     cv2.destroyAllWindows()
@@ -138,11 +152,11 @@ def diffImage(storedFrame,currentFrame,pixThreshold):
     """
 
     diff = cv2.absdiff(storedFrame,currentFrame)
-    _,diff = cv2.threshold(diff,pixThreshold,255,cv2.THRESH_BINARY)
+    _,diff = cv2.threshold(diff,pixThreshold[0],255,cv2.THRESH_BINARY)
     diff = diff / 255
     return diff
 
-def trackdiffImage(storedFrame, currentFrame, pixThreshold = 7):
+def trackdiffImage(storedFrame,currentFrame,pixThreshold):
     """
     This function finds the pixel difference between the current frame and
     the previous frame. Similar to the diffImage function, but uses a higher threshold
@@ -164,7 +178,7 @@ def trackdiffImage(storedFrame, currentFrame, pixThreshold = 7):
  
     """
     diff = cv2.absdiff(storedFrame,currentFrame)
-    _,diff = cv2.threshold(diff,7,255,cv2.THRESH_BINARY)
+    _,diff = cv2.threshold(diff,pixThreshold[1],255,cv2.THRESH_BINARY)
     return diff
 
 def Blur(image):
@@ -292,7 +306,7 @@ def makenumROIsimage():
                 num = movienum
                 filename = line
 
-    myFrameNumber = frameRate
+    myFrameNumber = (frameRate*movlen)-1
     cap = cv2.VideoCapture(filename)
     totalFrames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
 
@@ -325,18 +339,139 @@ def makenumROIsimage():
        i += 1
     image.save('NumberedROIsImage.png')    
 
-def main(pixThreshold,frameRate,videoStream):
+def createlongmovie():
+
+    modename = filenumber    
+    imageMode(modename)
+    modefilename = "mode_" + modename + ".png"
+    try:
+       imread(modefilename)
+    except:
+       imageMode(modename)
+
+    e = loadmodeImage(modefilename)
+
+    roimask = np.zeros((ydim,xdim))
+    f = open(roisfile, 'r')
+    lines = f.readlines()
+    i = 1
+    i2 = 0
+    for line in lines:
+       try:
+               print(int(line.split(' ')[0]))
+       except ValueError:
+               i2 += 1
+               continue
+       minx = int(line.split(' ')[0])
+       miny = int(line.split(' ')[1])
+       maxx = int(line.split(' ')[2])
+       maxy = int(line.split(' ')[3])
+       roimask[int(miny):int(maxy),int(minx):int(maxx)] = i
+       i += 1
+    numberofwells = i-1
+    numberofcols = int(i2/2)
+    numberofrows = int(numberofwells/numberofcols)
+    roimaskweights = convertMaskToWeights(roimask)
+
+    cap = cv2.VideoCapture(videoStream)
+
+    cap.set(3,roimask.shape[1])
+    cap.set(4,roimask.shape[0])
+
+    ret,frame = cap.read()
+    storedImage = np.array(e * 255, dtype = np.uint8)
+    storedMode = Blur(storedImage)
+    storedFrame = grayBlur(frame)
+    cenData = np.zeros([ saveFreq, len(np.unique(roimaskweights))*2 -2])
+    pixData = np.zeros([ saveFreq, len(np.unique(roimaskweights))])
+    i = 0;
+    totalFrames = 0
+    while(cap.isOpened()):
+        ret,frame = cap.read()
+        if ret == False:
+            break
+        currentFrame = grayBlur(frame)
+        diffpix = diffImage(storedFrame,currentFrame,pixThreshold)
+        diff = trackdiffImage(storedMode,currentFrame,pixThreshold)
+        diff.dtype = np.uint8
+        contours,hierarchy = cv2.findContours(diff, cv2.RETR_TREE,cv2.CHAIN_APPROX_NONE)
+        MIN_THRESH = 20.0
+        MIN_THRESH_P = 20.0
+        roi_dict = {}
+        for r in range(0,numberofwells):
+            roi_dict[r+1] = []
+        for cs in range(0,len(contours)):
+            if cv2.contourArea(contours[cs]) < 1.0:
+                continue
+            if cv2.arcLength(contours[cs],True) < 1.0:
+                continue
+            if cv2.contourArea(contours[cs]) > MIN_THRESH or cv2.arcLength(contours[cs],True) > MIN_THRESH_P:
+                M = cv2.moments(contours[cs])
+                cX = int(M["m10"] / M["m00"])
+                cY = int(M["m01"] / M["m00"])
+                area = cv2.contourArea(contours[cs])
+                perim = cv2.arcLength(contours[cs],True)
+                if int(roimask[cY,cX]) == 0:
+                   continue
+                if not roi_dict[int(roimask[cY,cX])]:
+                    roi_dict[int(roimask[cY,cX])].append((area*perim,cX,cY))
+                else:
+                    if roi_dict[int(roimask[cY,cX])][0][0] < area*perim:
+                        roi_dict[int(roimask[cY,cX])][0] = (area*perim,cX,cY)
+
+        pixcounts = []
+        pixcounts = np.bincount(roimaskweights, weights=diffpix.ravel())
+        pixData[i,:] = np.hstack((pixcounts))
+        counts = []
+        keys = roi_dict.keys()
+        keys = sorted(keys)
+        for k in keys:
+            x = -10000
+            y = -10000
+            if roi_dict[k]:
+                x = roi_dict[k][0][1]
+                y = roi_dict[k][0][2]
+            counts.append(x)
+            counts.append(y)
+            cv2.line(storedImage,(x,y),(x,y),(255,255,255),2)
+        if i == 100000:
+            cv2.imwrite(videoStream + '_trackedimagewithlines_' + str(i) + ".png", storedImage)
+        cenData[i,:] = np.asarray(counts)
+        totalFrames += 1
+        storedFrame = currentFrame
+        i += 1
+
+    file = open(videoStream + ".centroid2",'w')
+    for x in range(0,(frameRate*movlen)-1):
+        for y in range(0,numberofwells*2):
+            file.write(str(int(cenData[x,:][y])) + '\n')
+    pixData = pixData[:i,:]
+    pixData = pixData[:,1:]
+    file = open(videoStream + ".motion2",'w')
+    for x in range(0,(frameRate*movlen)-1):
+        for y in range(0,numberofwells):
+            file.write(str(int(pixData[x,:][y])) + '\n')
+
+    # 10/2/20204:53:31 PM\n
+    file = open(videoStream +".timestamp2",'w')
+    a = datetime.datetime(100,1,1,4,53,31)
+    i = 1
+    for frame in range(0,(frameRate*movlen)):
+        file.write('10/2/2020'+str(a.time())+' PM\n')
+        if i == int(frameRate):
+           a = a + datetime.timedelta(0,1)
+           i = 0
+        i+=1
+    cap.release()
+    cv2.destroyAllWindows()
+    try:
+        image = Image.open('lastframe.png')
+    except:
+        makenumROIsimage()
+
+def main():
     """
     The main function of the analysis script. Analyzes an individual movie for movement in well.
-
-    Parameters
-    ---------
-    pixThreshold: int
-        The pixel threshold value. Default is 3.
-    frameRate: int
-        The value pertaining to the number of frames for the movie. Default is 285.
-    videoStream: string
-        The name of the movie to be analyzed.
 
     Outputs
     -------
@@ -345,8 +480,6 @@ def main(pixThreshold,frameRate,videoStream):
     A PNG file showing the centroids of the fish during the entire movie, called <videoStream>_trackedimagewithlines.png.
 
     """
-    saveFreq = 4500 
-    filenumber = videoStream.split('.')[0].split('_')[len(videoStream.split('.')[0].split('_'))-1]
 
     f = open(eventsfile, 'r')
     lines = f.readlines()
@@ -373,7 +506,7 @@ def main(pixThreshold,frameRate,videoStream):
         startdate2 = startdate.split("-")[1] + "/" + startdate.split("-")[2] + "/" + startdate.split("-")[0]
         dateplustime = startdate2 + TAPES[0][0:len(TAPES[0])]
         thistime = faststrptime(dateplustime)
-        unixtimestamp = dt.timestamp(thistime)
+        unixtimestamp = datetime.datetime.timestamp(thistime)
         timestamp_list.append(int(unixtimestamp))
 
     i = 0    
@@ -444,20 +577,15 @@ def main(pixThreshold,frameRate,videoStream):
                 movielist = x
 
     modename = str(movielist[0]) + "to" + str(movielist[len(movielist)-1])
-    imageMode(movielist, modename)
     modefilename = "mode_" + modename + ".png"
     try:
        imread(modefilename)
     except:
-       imageMode(movielist,modename)
+       imageMode(modename,movielist)
 
     e = loadmodeImage(modefilename)
     
-    cmaxxs = []
-    cminxs = []
-    cmaxys = []
-    cminys = []
-    roimask = np.zeros((660,1088))
+    roimask = np.zeros((ydim,xdim))
     f = open(roisfile, 'r')
     lines = f.readlines()
     i = 1
@@ -473,19 +601,10 @@ def main(pixThreshold,frameRate,videoStream):
        maxx = int(line.split(' ')[2])
        maxy = int(line.split(' ')[3])
        roimask[int(miny):int(maxy),int(minx):int(maxx)] = i
-       cmaxxs.append(maxx)
-       cmaxys.append(maxy)
-       cminxs.append(minx)
-       cminys.append(miny)
        i += 1
-    print(roimask)
     numberofwells = i-1
     numberofcols = int(i2/2)
     numberofrows = int(numberofwells/numberofcols)
-    cmaxxs.sort()
-    cmaxys.sort()
-    cminxs.sort()
-    cminys.sort()
     roimaskweights = convertMaskToWeights(roimask)
 
     cap = cv2.VideoCapture(videoStream)
@@ -497,9 +616,8 @@ def main(pixThreshold,frameRate,videoStream):
     storedImage = np.array(e * 255, dtype = np.uint8)
     storedMode = Blur(storedImage)
     storedFrame = grayBlur(frame)
-    cenData = np.zeros([ saveFreq, len(np.unique(roimaskweights))*2 -2])
-    print(len(np.unique(roimaskweights))*2 -2)
-    pixData = np.zeros([ saveFreq, len(np.unique(roimaskweights))])
+    cenData = np.zeros([ int(saveFreq), len(np.unique(roimaskweights))*2 -2])
+    pixData = np.zeros([ int(saveFreq), len(np.unique(roimaskweights))])
     i = 0;
     totalFrames = 0
     while(cap.isOpened()):
@@ -508,7 +626,7 @@ def main(pixThreshold,frameRate,videoStream):
             break
         currentFrame = grayBlur(frame)
         diffpix = diffImage(storedFrame,currentFrame,pixThreshold)
-        diff = trackdiffImage(storedMode,currentFrame)
+        diff = trackdiffImage(storedMode,currentFrame,pixThreshold)
         diff.dtype = np.uint8
         contours,hierarchy = cv2.findContours(diff, cv2.RETR_TREE,cv2.CHAIN_APPROX_NONE)
         MIN_THRESH = 20.0
@@ -570,11 +688,15 @@ def main(pixThreshold,frameRate,videoStream):
 
     cap.release()
     cv2.destroyAllWindows()
+    
     try:
         image = Image.open('lastframe.png')
     except:
         makenumROIsimage()
 
-main(pixThreshold,frameRate,videoStream)
+if (not longmovie):
+    main()
+else:
+    createlongmovie()
 
 
