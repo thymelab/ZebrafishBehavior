@@ -13,7 +13,7 @@ parser.add_argument('-prefix', type=str, action="store", dest="prefix", default=
 parser.add_argument('-hprefix', type=str, action="store", dest="hprefix", default="../hsmovie") # high-speed data prefix
 parser.add_argument('-pfile', type=str, action="store", dest="pfile", default="../PlotParameters")
 parser.add_argument('-esfile', type=str, action="store", dest="esfile", default="../sectionsfile")
-parser.add_argument('-scriptpath', type=str, action="store", dest="scriptpath", default="/data/project/thymelab/Newest_Behavior_Scripts/versionforROI/") # path for the analysis suite
+parser.add_argument('-scriptpath', type=str, action="store", dest="scriptpath", default="/data/project/thymelab/Newest_Behavior_Scripts/finalcode2020oct/") # path for the analysis suite
 parser.add_argument('-other', type=str, action="store", dest="other", default="") # args to add at the end. YOU CANNOT INCLUDE THE INITIAL DASH FOR A NEW ARG WITH ARGPARSER, WILL BE ADDED BY THIS SCRIPT"
 
 args = parser.parse_args()
@@ -69,7 +69,7 @@ def make_slurm_file(fd1, fd2, date, hfile):
 	ffile.write("\" -e \"" + efile + "\" -c \"" + prefix + ".centroid1." + date)
 	ffile.write("\" -d \"" + prefix + ".motion1." + date)
 	ffile.write("\" -m \"" + hprefix + date)
-	ffile.write("_\" -g \../"" + hfile)
+	ffile.write("_\" -g \"../" + hfile)
 	ffile.write("\" -s \"" + esfile)
 	ffile.write("\" -j \"" + pfile + "\"")
 	if other != "":
