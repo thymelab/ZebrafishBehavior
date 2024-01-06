@@ -46,5 +46,5 @@ time_day2nightransition=2_23:00:00-2_23:10:01
 time_day3nightall=2_23:10:00-3_8:59:00
 time_day3morntransition=3_9:00:00-3_9:10:01
 time_day3msdf=3_9:10:00-3_12:59:00
-time_day3heatshock=3_12:59:00-3_14:50:00
-time_combo=0_23:00:00-3_14:50:00
+time_heatshock=3_13:00:00-3_18:00:00
+time_combo=0_23:00:00-3_18:00:00
