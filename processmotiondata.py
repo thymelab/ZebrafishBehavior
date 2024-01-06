@@ -285,9 +285,16 @@ def CalculateBoutProperties(fish_id, fish_rois, fish_distancesordpix, timestamp_
 		if b != (len(boutstarts)-1):
 			interbout_end = boutstarts[b+1] - 1
 		else:
-			interbout_end = np.shape(rhos)[0]
+			#print("THEY ARE EQUAL")
+			interbout_end = np.shape(rhos)[0] - 1
 		# Each bout also gets an interbout that follows it (even last one, goes until end of data)
 		# So the number of items in every list passed back should be exactly the same
+		#print(interbout_start, interbout_end, bout_start, bout_end)
+		#print(len(timestamp_data_array))
+		#print(b, len(boutstarts)-1)
+		#print(timestamp_data_array[len(timestamp_data_array)-1])
+		#print(timestamp_data_array[interbout_start])
+		#print(timestamp_data_array[interbout_end])
 		IBtime = (timestamp_data_array[interbout_end] - timestamp_data_array[interbout_start]).total_seconds() * 1000
 		boutproperties["interbouttime"].append(IBtime)
 		if (IBtime != 0):
@@ -310,10 +317,12 @@ def CalculateBoutProperties(fish_id, fish_rois, fish_distancesordpix, timestamp_
 			boutproperties["boutpeakangvelocity"].append(peakanglevel)
 			boutrev = calculate_boutrev(bout_start, bout_end, unsignedthetas, rhos)
 			boutproperties["boutrevolutions"].append(boutrev)
+			#print("TESTING0")
 			
 			#if ((boutrev > 4.0) and (0.3 < (bouttime / boutdistanceordpix) < 1.3) and (boutdistanceordpix > 70)):
 			if ((boutrev > fileloading.seizurefilters[0]) and ((float(boutdistanceordpix) / float(bouttime)) > fileloading.seizurefilters[1]) and (float(boutdistanceordpix) > fileloading.seizurefilters[3])):
 				boutproperties["boutseizurecount"].append(1)
+			#	print("TESTING1", bout_start, bout_end, boutrev, (float(boutdistanceordpix) / float(bouttime)), (float(boutdistanceordpix)))
 			else:
 				boutproperties["boutseizurecount"].append(0)
 			sumheading,sumabsheading,initialdirection = HeadingAngle(xarray,yarray,bout_start,bout_end)
@@ -326,7 +335,8 @@ def CalculateBoutProperties(fish_id, fish_rois, fish_distancesordpix, timestamp_
 			boutproperties["boutcenterfraction"].append(centerfrac)
 			boutproperties["interboutcenterfraction"].append(intercenterfrac)
 			# Seems not likely that you would want to filter without real measurements from distance
-			if (fileloading.longmovie):
+			if (fileloading.outputmovies):
+			#	print("TESTING2", fish_id, bout_start, bout_end)
 				# PUT IN MOVIE FILTERS AND GET ALL OF THESE FUNCTION INPUTS
 				#"1,=:boutseizurecount"
 				# get value that was just added to the end of the list and compare to the input filter

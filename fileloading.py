@@ -16,6 +16,7 @@ well_conversion = {0:0,8:1,16:2,24:3,32:4,40:5,48:6,56:7,64:8,72:9,80:10,88:11,1
 # Input arguments
 parser = argparse.ArgumentParser(description='loading for fish behavior files')
 parser.add_argument('-longmovie', type=str, action="store", dest="longmoviename", default="nomovie")
+parser.add_argument('-outputmovies', action="store_true", dest="outputmovies", default=False)
 parser.add_argument('-r', type=str, action="store", dest="roisfile")
 parser.add_argument('-oldtracking', action="store_true", dest="oldtracking", default=False) # Tracked data from before code was updated to have output ROIs, irrelevant for new users, only compatible with 96-well plates
 parser.add_argument('-graphonly', action="store_true", dest="graphonly", default=False)
@@ -50,6 +51,7 @@ if(longmoviename != "nomovie"):
 	longmovie = True
 roisfile = args.roisfile
 oldtracking = args.oldtracking
+outputmovies = args.outputmovies
 graphonly = args.graphonly
 graphparameters = args.graphparameters
 if(not graphonly):
